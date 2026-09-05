@@ -1,13 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import styles from "./page.module.css";
-import { cipherKnowledge } from "./cipher";
+
+type Role = "user" | "assistant";
 
 type Message = {
-  role: "user" | "cipher";
+  id: string;
+  role: Role;
   content: string;
-  timestamp?: number;
+  timestamp: number;
 };
 
 type Chat = {
@@ -18,498 +25,372 @@ type Chat = {
   updatedAt: number;
 };
 
-type Page = "home" | "chats" | "explore" | "settings";
+type View =
+  | "chat"
+  | "chats"
+  | "explore"
+  | "settings";
 
-const STORAGE_KEY = "cipher-chats";
+type Theme = "dark" | "light";
 
-const STOP_WORDS = new Set([
-  "what",
-  "whats",
-  "what's",
-  "is",
-  "are",
-  "the",
-  "a",
-  "an",
-  "to",
-  "of",
-  "for",
-  "in",
-  "on",
-  "at",
-  "and",
-  "or",
-  "do",
-  "does",
-  "did",
-  "can",
-  "could",
-  "would",
-  "should",
-  "how",
-  "why",
-  "when",
-  "where",
-  "who",
-  "which",
-  "me",
-  "my",
-  "you",
-  "your",
-  "please",
-  "tell",
-  "explain",
-  "mean",
-  "means",
-  "about",
-  "give",
-  "get",
-  "with",
-  "be",
-  "it",
-  "this",
-  "that",
-  "from",
-  "as",
-  "i",
-  "im",
-  "i'm",
-  "we",
-  "our",
-  "they",
-  "their",
-  "was",
-  "were",
-  "will",
-  "just",
-  "so",
-]);
+type SettingSection =
+  | "general"
+  | "appearance"
+  | "chat"
+  | "privacy"
+  | "about";
 
-function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[?!.,'"`():;]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
+const STORAGE_KEY = "cipher-os-chats-v2";
+const THEME_KEY = "cipher-os-theme";
+const SIDEBAR_KEY = "cipher-os-sidebar";
 
-function normalizePidgin(text: string): string {
-  let result = normalize(text);
+const DEFAULT_WELCOME_MESSAGE =
+  "Hello 👋 I’m Cipher. What are we working on today?";
 
-  const replacements: Record<string, string> = {
-    "how far": "hello",
-    "how you dey": "how are you",
-    "how body": "how are you",
-    "how far na": "hello",
-    "wetin": "what",
-    "wetin be": "what is",
-    "wetin dey": "what is",
-    "wetin you fit do": "what can you do",
-    "wetin you sabi": "what do you know",
-    "you sabi": "you know",
-    "sabi": "know",
-    "dey": "are",
-    "abeg": "please",
-    "oya": "go",
-    "make we": "let us",
-    "make i": "let me",
-    "una": "you",
-    "una go": "you will",
-    "no wahala": "no problem",
-    "wahala": "problem",
-    "egbon": "brother",
-    "bros": "brother",
-    "bro": "brother",
-    "jare": "",
-    "sha": "",
-    "na so": "yes",
-    "ehen": "yes",
-    "chai": "",
-    "shey": "is",
-    "abi": "or",
-    "dem": "they",
-    "am": "it",
-    "go dey": "will be",
-    "dey do": "are doing",
-    "fit": "can",
-    "don": "have",
-    "done": "have",
-  };
+const QUICK_ACTIONS = [
+  {
+    title: "Explain a concept",
+    description: "Break down something difficult",
+    prompt: "Explain a difficult concept to me in a simple way.",
+    icon: "✦",
+  },
+  {
+    title: "Solve a problem",
+    description: "Think through a challenge",
+    prompt: "Help me solve a problem step by step.",
+    icon: "⌁",
+  },
+  {
+    title: "Write something",
+    description: "Create polished content",
+    prompt: "Help me write something professionally.",
+    icon: "Aa",
+  },
+  {
+    title: "Build with code",
+    description: "Work through a technical idea",
+    prompt: "Help me build something with code.",
+    icon: "</>",
+  },
+];
 
-  const phrases = Object.keys(replacements).sort(
-    (a, b) => b.length - a.length
-  );
+const NAV_ITEMS: {
+  id: View;
+  label: string;
+  icon: string;
+}[] = [
+  {
+    id: "chat",
+    label: "Chat",
+    icon: "⌂",
+  },
+  {
+    id: "chats",
+    label: "Chats",
+    icon: "◌",
+  },
+  {
+    id: "explore",
+    label: "Explore",
+    icon: "✦",
+  },
+];
 
-  for (const phrase of phrases) {
-    const replacement = replacements[phrase];
+const SETTINGS_ITEMS: {
+  id: SettingSection;
+  label: string;
+  icon: string;
+}[] = [
+  {
+    id: "general",
+    label: "General",
+    icon: "◫",
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    icon: "◐",
+  },
+  {
+    id: "chat",
+    label: "Chat",
+    icon: "◌",
+  },
+  {
+    id: "privacy",
+    label: "Privacy",
+    icon: "◇",
+  },
+  {
+    id: "about",
+    label: "About",
+    icon: "ⓘ",
+  },
+];
 
-    result = result.replace(
-      new RegExp(`\\b${phrase}\\b`, "g"),
-      replacement
-    );
-  }
-
-  return result.replace(/\s+/g, " ").trim();
-}
-
-const SYNONYMS: Record<string, string[]> = {
-  help: ["assist", "support", "aid", "guide"],
-  explain: ["describe", "clarify", "teach", "breakdown"],
-  meaning: ["definition", "means", "define"],
-  computer: ["pc", "laptop", "machine", "system"],
-  programming: ["coding", "code", "software development"],
-  developer: ["programmer", "coder", "software engineer"],
-  website: ["site", "webpage", "web app"],
-  application: ["app", "software"],
-  phone: ["mobile", "smartphone", "device"],
-  school: ["university", "college", "campus"],
-  student: ["undergraduate", "learner"],
-  exam: ["test", "examination", "assessment"],
-  engineering: ["engineer"],
-  mathematics: ["math", "calculation"],
-  science: ["scientific"],
-  money: ["cash", "funds", "finance"],
-  business: ["company", "enterprise", "brand"],
-  design: ["graphic", "creative", "art"],
-  music: ["song", "audio"],
-  question: ["query", "problem"],
-  answer: ["response", "reply"],
-  remember: ["memory", "recall"],
-};
-
-function getImportantWords(text: string): string[] {
-  return normalizePidgin(text)
-    .split(" ")
-    .filter(
-      (word) =>
-        word.length > 2 &&
-        !STOP_WORDS.has(word)
-    );
-}
-
-function synonymMatches(
-  word: string,
-  target: string
-): boolean {
-  if (word === target) return true;
-
-  const group = SYNONYMS[word];
-
-  if (group?.includes(target)) {
-    return true;
-  }
-
-  for (const [base, synonyms] of Object.entries(SYNONYMS)) {
-    if (synonyms.includes(word) && base === target) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function getGreeting(query: string): string | null {
-  const normalized = normalizePidgin(query);
-
-  const greetings = [
-    "hello",
-    "hi",
-    "hey",
-    "hiya",
-    "howdy",
-    "yo",
-    "sup",
-    "wassup",
-    "what's up",
-    "whats up",
-    "how far",
-    "how are you",
-    "good morning",
-    "good afternoon",
-    "good evening",
-  ];
-
-  if (greetings.includes(normalized)) {
-    return "Hello 👋 I'm Cipher. How can I help you?";
-  }
-
-  if (
-    normalized === "thanks" ||
-    normalized === "thank you" ||
-    normalized === "thank"
-  ) {
-    return "You're welcome 🤝";
-  }
-
-  return null;
-}
-
-function findAnswer(
-  query: string,
-  previousMessages: Message[] = []
-): string {
-  const originalQuery = query.trim();
-
-  if (!originalQuery) {
-    return "Ask me something and I'll do my best to help.";
-  }
-
-  const greeting = getGreeting(originalQuery);
-
-  if (greeting) {
-    return greeting;
-  }
-
-  const normalizedQuery = normalizePidgin(originalQuery);
-  const queryWords = getImportantWords(normalizedQuery);
-
-  const followUpWords = new Set([
-    "it",
-    "that",
-    "this",
-    "them",
-    "they",
-    "more",
-    "again",
-    "why",
-    "how",
-    "what",
-    "which",
-    "explain",
-    "continue",
-    "another",
-    "example",
-    "examples",
-    "mean",
-    "means",
-  ]);
-
-  const isShortFollowUp =
-    queryWords.length <= 5 &&
-    queryWords.some((word) =>
-      followUpWords.has(word)
-    );
-
-  let contextWords: string[] = [];
-
-  if (
-    isShortFollowUp &&
-    previousMessages.length > 0
-  ) {
-    const recentUserMessages =
-      previousMessages
-        .filter((msg) => msg.role === "user")
-        .slice(-3);
-
-    contextWords = recentUserMessages.flatMap(
-      (msg) => getImportantWords(msg.content)
-    );
-  }
-
-  let bestMatch:
-    | (typeof cipherKnowledge)[number]
-    | null = null;
-
-  let bestScore = 0;
-
-  for (const item of cipherKnowledge) {
-    const question = normalizePidgin(item.question);
-
-    const keywords = item.keywords.map(
-      (keyword) => normalizePidgin(keyword)
-    );
-
-    const questionWords =
-      getImportantWords(question);
-
-    let score = 0;
-
-    if (normalizedQuery === question) {
-      score += 150;
-    }
-
-    if (
-      question.includes(normalizedQuery) &&
-      normalizedQuery.length > 4
-    ) {
-      score += 40;
-    }
-
-    for (const keyword of keywords) {
-      if (!keyword) continue;
-
-      if (normalizedQuery.includes(keyword)) {
-        score += keyword.includes(" ")
-          ? 25
-          : 10;
-      }
-
-      const keywordWords =
-        getImportantWords(keyword);
-
-      for (const word of queryWords) {
-        if (keywordWords.includes(word)) {
-          score += 5;
-        }
-
-        for (const keywordWord of keywordWords) {
-          if (
-            synonymMatches(
-              word,
-              keywordWord
-            )
-          ) {
-            score += 4;
-          }
-        }
-      }
-    }
-
-    for (const word of queryWords) {
-      if (questionWords.includes(word)) {
-        score += 7;
-      }
-
-      for (const questionWord of questionWords) {
-        if (
-          synonymMatches(
-            word,
-            questionWord
-          )
-        ) {
-          score += 4;
-        }
-      }
-    }
-
-    if (
-      isShortFollowUp &&
-      contextWords.length > 0
-    ) {
-      for (const word of contextWords) {
-        if (questionWords.includes(word)) {
-          score += 3;
-        }
-
-        for (const keyword of keywords) {
-          if (
-            getImportantWords(keyword).includes(
-              word
-            )
-          ) {
-            score += 3;
-          }
-        }
-      }
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = item;
-    }
-  }
-
-  if (
-    bestMatch &&
-    bestScore >= 7
-  ) {
-    return bestMatch.answer;
-  }
-
-  if (
-    isShortFollowUp &&
-    previousMessages.length > 0
-  ) {
-    const lastUserMessage =
-      [...previousMessages]
-        .reverse()
-        .find(
-          (msg) => msg.role === "user"
-        );
-
-    if (lastUserMessage) {
-      return `I understand you're continuing from your previous question about "${lastUserMessage.content}". Ask the specific part you want me to explain.`;
-    }
-  }
-
-  if (
-    normalizedQuery.includes("who are you") ||
-    normalizedQuery.includes("what are you")
-  ) {
-    return "I'm Cipher OS, a local knowledge-based assistant built to answer questions from my knowledge base.";
-  }
-
-  if (
-    normalizedQuery.includes("what can you do") ||
-    normalizedQuery.includes("what can you help")
-  ) {
-    return "I can answer questions from my knowledge base, help with technology, learning, general knowledge, engineering, creativity, and many everyday topics.";
-  }
-
-  if (
-    normalizedQuery.includes("you understand pidgin")
-  ) {
-    return "Yes 🇳🇬 I can understand Nigerian English and common Pidgin expressions.";
-  }
-
-  return "I'm not sure about that yet. Try asking the question another way, or make it a little more specific.";
+function createId(prefix = "id") {
+  return `${prefix}-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 9)}`;
 }
 
 function createChat(): Chat {
   const now = Date.now();
 
   return {
-    id: `${now}-${Math.random()
-      .toString(36)
-      .substring(2, 10)}`,
-    title: "New Chat",
+    id: createId("chat"),
+    title: "New conversation",
     messages: [],
     createdAt: now,
     updatedAt: now,
   };
 }
 
-function createTitle(
-  message: string
-): string {
-  const cleaned = message
-    .trim()
-    .replace(/\s+/g, " ");
+function createMessage(
+  role: Role,
+  content: string
+): Message {
+  return {
+    id: createId("msg"),
+    role,
+    content,
+    timestamp: Date.now(),
+  };
+}
 
-  if (cleaned.length <= 32) {
+function makeTitle(text: string) {
+  const cleaned = text.trim().replace(/\s+/g, " ");
+
+  if (cleaned.length <= 38) {
     return cleaned;
   }
 
-  return `${cleaned.substring(0, 32)}...`;
+  return `${cleaned.slice(0, 38).trim()}…`;
 }
 
-function formatTime(timestamp?: number): string {
-  if (!timestamp) return "";
-
+function formatTime(timestamp: number) {
   return new Intl.DateTimeFormat(undefined, {
     hour: "numeric",
     minute: "2-digit",
   }).format(timestamp);
 }
 
-export default function Home() {
-  const [chats, setChats] =
-    useState<Chat[]>([]);
+function formatDate(timestamp: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(timestamp);
+}
 
+function getInitials() {
+  return "C";
+}
+
+function scrollToBottom(
+  ref: React.RefObject<HTMLDivElement | null>
+) {
+  requestAnimationFrame(() => {
+    ref.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
+  });
+}
+
+function Icon({
+  name,
+  size = 18,
+}: {
+  name: string;
+  size?: number;
+}) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.75,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  switch (name) {
+    case "plus":
+      return (
+        <svg {...common}>
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      );
+
+    case "search":
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="6.5" />
+          <path d="m16 16 4 4" />
+        </svg>
+      );
+
+    case "send":
+      return (
+        <svg {...common}>
+          <path d="M21 3 10 14" />
+          <path d="m21 3-7 18-4-7-7-4 18-7Z" />
+        </svg>
+      );
+
+    case "copy":
+      return (
+        <svg {...common}>
+          <rect
+            x="8"
+            y="8"
+            width="11"
+            height="11"
+            rx="2"
+          />
+          <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+        </svg>
+      );
+
+    case "edit":
+      return (
+        <svg {...common}>
+          <path d="m4 16.5-.6 3.1 3.1-.6L18.8 6.7a2 2 0 0 0-2.8-2.8L4 16.5Z" />
+          <path d="m14.6 6.4 3 3" />
+        </svg>
+      );
+
+    case "trash":
+      return (
+        <svg {...common}>
+          <path d="M4 7h16" />
+          <path d="M9 7V4h6v3" />
+          <path d="M7 7l1 13h8l1-13" />
+          <path d="M10 11v5M14 11v5" />
+        </svg>
+      );
+
+    case "chevron":
+      return (
+        <svg {...common}>
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      );
+
+    case "sun":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3.5" />
+          <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+      );
+
+    case "moon":
+      return (
+        <svg {...common}>
+          <path d="M20.5 14.8A8.5 8.5 0 0 1 9.2 3.5 8.5 8.5 0 1 0 20.5 14.8Z" />
+        </svg>
+      );
+
+    case "monitor":
+      return (
+        <svg {...common}>
+          <rect
+            x="3"
+            y="4"
+            width="18"
+            height="12"
+            rx="2"
+          />
+          <path d="M8 20h8M12 16v4" />
+        </svg>
+      );
+
+    case "check":
+      return (
+        <svg {...common}>
+          <path d="m5 12 4 4L19 6" />
+        </svg>
+      );
+
+    case "lock":
+      return (
+        <svg {...common}>
+          <rect
+            x="5"
+            y="10"
+            width="14"
+            height="10"
+            rx="2"
+          />
+          <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+        </svg>
+      );
+
+    case "database":
+      return (
+        <svg {...common}>
+          <ellipse
+            cx="12"
+            cy="5"
+            rx="7"
+            ry="3"
+          />
+          <path d="M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5" />
+          <path d="M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7" />
+        </svg>
+      );
+
+    case "shield":
+      return (
+        <svg {...common}>
+          <path d="M12 3 19 6v5c0 5-3.2 8.4-7 10-3.8-1.6-7-5-7-10V6l7-3Z" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+      );
+
+    case "info":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 10v6" />
+          <path d="M12 7h.01" />
+        </svg>
+      );
+
+    default:
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="7" />
+        </svg>
+      );
+  }
+}
+
+export default function Home() {
+  const [chats, setChats] = useState<Chat[]>([]);
   const [activeChatId, setActiveChatId] =
     useState<string | null>(null);
 
-  const [message, setMessage] =
-    useState("");
+  const [view, setView] =
+    useState<View>("chat");
 
-  const [isTyping, setIsTyping] =
+  const [settingsSection, setSettingsSection] =
+    useState<SettingSection>("general");
+
+  const [theme, setTheme] =
+    useState<Theme>("dark");
+
+  const [sidebarCollapsed, setSidebarCollapsed] =
     useState(false);
 
-  const [currentPage, setCurrentPage] =
-    useState<Page>("home");
-
-  const [searchQuery, setSearchQuery] =
-    useState("");
+  const [message, setMessage] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [search, setSearch] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
   const [editingChatId, setEditingChatId] =
     useState<string | null>(null);
@@ -517,78 +398,79 @@ export default function Home() {
   const [editingTitle, setEditingTitle] =
     useState("");
 
-  const [loaded, setLoaded] =
-    useState(false);
-
-  const [mobileMenuOpen, setMobileMenuOpen] =
-    useState(false);
-
-  const [copiedMessage, setCopiedMessage] =
+  const [copiedId, setCopiedId] =
     useState<string | null>(null);
 
-  const responseTimer =
-    useRef<ReturnType<typeof setTimeout> | null>(
-      null
-    );
+  const [temperature, setTemperature] =
+    useState(0.7);
 
-  const copyTimer =
-    useRef<ReturnType<typeof setTimeout> | null>(
-      null
-    );
+  const [enterToSend, setEnterToSend] =
+    useState(true);
 
-  const messagesEndRef =
+  const [showTimestamps, setShowTimestamps] =
+    useState(true);
+
+  const [compactMessages, setCompactMessages] =
+    useState(false);
+
+  const [confirmDeleteChats, setConfirmDeleteChats] =
+    useState(true);
+
+  const [notifications, setNotifications] =
+    useState(true);
+
+  const [statusMessage, setStatusMessage] =
+    useState("");
+
+  const bottomRef =
     useRef<HTMLDivElement | null>(null);
+
+  const copyTimeout =
+    useRef<ReturnType<typeof setTimeout> | null>(
+      null
+    );
+
+  const statusTimeout =
+    useRef<ReturnType<typeof setTimeout> | null>(
+      null
+    );
 
   useEffect(() => {
     try {
       const savedChats =
-        localStorage.getItem(
-          STORAGE_KEY
-        );
+        localStorage.getItem(STORAGE_KEY);
 
       if (savedChats) {
-        const parsed =
-          JSON.parse(savedChats);
+        const parsed = JSON.parse(savedChats);
 
         if (Array.isArray(parsed)) {
           setChats(parsed);
-
-          if (parsed.length > 0) {
-            const sorted = [...parsed].sort(
-              (a, b) =>
-                b.updatedAt -
-                a.updatedAt
-            );
-
-            setActiveChatId(
-              sorted[0].id
-            );
-          }
         }
       }
+
+      const savedTheme =
+        localStorage.getItem(
+          THEME_KEY
+        ) as Theme | null;
+
+      if (
+        savedTheme === "dark" ||
+        savedTheme === "light"
+      ) {
+        setTheme(savedTheme);
+      }
+
+      const savedSidebar =
+        localStorage.getItem(SIDEBAR_KEY);
+
+      if (savedSidebar === "collapsed") {
+        setSidebarCollapsed(true);
+      }
     } catch {
-      localStorage.removeItem(
-        STORAGE_KEY
-      );
+      // Ignore malformed local storage.
     }
 
     setLoaded(true);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (responseTimer.current) {
-        clearTimeout(
-          responseTimer.current
-        );
-      }
-
-      if (copyTimer.current) {
-        clearTimeout(
-          copyTimer.current
-        );
-      }
-    };
   }, []);
 
   useEffect(() => {
@@ -600,191 +482,184 @@ export default function Home() {
     );
   }, [chats, loaded]);
 
-  const activeChat =
-    chats.find(
-      (chat) =>
-        chat.id === activeChatId
-    ) || null;
+  useEffect(() => {
+    if (!loaded) return;
+
+    localStorage.setItem(
+      THEME_KEY,
+      theme
+    );
+
+    document.documentElement.dataset.theme =
+      theme;
+  }, [theme, loaded]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-    });
+    if (!loaded) return;
+
+    localStorage.setItem(
+      SIDEBAR_KEY,
+      sidebarCollapsed
+        ? "collapsed"
+        : "expanded"
+    );
   }, [
+    sidebarCollapsed,
+    loaded,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeout.current) {
+        clearTimeout(copyTimeout.current);
+      }
+
+      if (statusTimeout.current) {
+        clearTimeout(statusTimeout.current);
+      }
+    };
+  }, []);
+
+  const sortedChats = useMemo(
+    () =>
+      [...chats].sort(
+        (a, b) =>
+          b.updatedAt - a.updatedAt
+      ),
+    [chats]
+  );
+
+  const filteredChats = useMemo(() => {
+    const q =
+      search.trim().toLowerCase();
+
+    if (!q) {
+      return sortedChats;
+    }
+
+    return sortedChats.filter(
+      (chat) =>
+        chat.title
+          .toLowerCase()
+          .includes(q) ||
+        chat.messages.some(
+          (msg) =>
+            msg.content
+              .toLowerCase()
+              .includes(q)
+        )
+    );
+  }, [search, sortedChats]);
+
+  const activeChat = useMemo(
+    () =>
+      chats.find(
+        (chat) =>
+          chat.id === activeChatId
+      ) ?? null,
+    [activeChatId, chats]
+  );
+
+  useEffect(() => {
+    if (!activeChatId) return;
+
+    scrollToBottom(bottomRef);
+  }, [
+    activeChatId,
     activeChat?.messages.length,
     isTyping,
   ]);
 
-  useEffect(() => {
-    setCopiedMessage(null);
-  }, [activeChatId]);
+  function showStatus(text: string) {
+    setStatusMessage(text);
 
-  const sortedChats = useMemo(() => {
-    return [...chats].sort(
-      (a, b) =>
-        b.updatedAt -
-        a.updatedAt
-    );
-  }, [chats]);
-
-  const filteredChats =
-    useMemo(() => {
-      const query =
-        searchQuery
-          .trim()
-          .toLowerCase();
-
-      if (!query) {
-        return sortedChats;
-      }
-
-      return sortedChats.filter(
-        (chat) => {
-          const titleMatch =
-            chat.title
-              .toLowerCase()
-              .includes(query);
-
-          const messageMatch =
-            chat.messages.some(
-              (msg) =>
-                msg.content
-                  .toLowerCase()
-                  .includes(query)
-            );
-
-          return (
-            titleMatch ||
-            messageMatch
-          );
-        }
-      );
-    }, [
-      sortedChats,
-      searchQuery,
-    ]);
-
-  function navigateTo(page: Page) {
-    setCurrentPage(page);
-    setMobileMenuOpen(false);
-  }
-
-  function newChat() {
-    if (responseTimer.current) {
+    if (statusTimeout.current) {
       clearTimeout(
-        responseTimer.current
+        statusTimeout.current
       );
-
-      responseTimer.current = null;
     }
 
-    setCopiedMessage(null);
+    statusTimeout.current =
+      setTimeout(() => {
+        setStatusMessage("");
+      }, 1800);
+  }
 
+  function createAndOpenChat() {
     const chat = createChat();
 
-    setChats((prev) => [
+    setChats((current) => [
       chat,
-      ...prev,
+      ...current,
     ]);
 
     setActiveChatId(chat.id);
+    setView("chat");
     setMessage("");
+    setCopiedId(null);
     setIsTyping(false);
-    setCurrentPage("home");
-    setMobileMenuOpen(false);
   }
 
-  function openChat(
-    chatId: string
-  ) {
-    if (responseTimer.current) {
-      clearTimeout(
-        responseTimer.current
-      );
-
-      responseTimer.current = null;
-    }
-
-    setCopiedMessage(null);
+  function openChat(chatId: string) {
     setActiveChatId(chatId);
+    setView("chat");
     setMessage("");
+    setCopiedId(null);
     setIsTyping(false);
-    setCurrentPage("home");
-    setMobileMenuOpen(false);
   }
 
-  function deleteChat(
-    chatId: string
+  function openSettings(
+    section: SettingSection
   ) {
-    const chat =
-      chats.find(
-        (item) =>
-          item.id === chatId
-      );
+    setSettingsSection(section);
+    setView("settings");
+  }
 
-    if (!chat) return;
+  function updateTheme(nextTheme: Theme) {
+    setTheme(nextTheme);
+    showStatus(
+      `${nextTheme === "dark" ? "Dark" : "Light"} mode enabled`
+    );
+  }
 
-    const confirmed =
-      window.confirm(
-        `Delete "${chat.title}"?\n\nThis conversation will be permanently removed from this browser.`
-      );
-
-    if (!confirmed) return;
-
-    if (responseTimer.current) {
-      clearTimeout(
-        responseTimer.current
-      );
-
-      responseTimer.current = null;
-    }
-
-    setCopiedMessage(null);
-
-    const remainingChats =
-      chats.filter(
-        (item) =>
-          item.id !== chatId
-      );
-
-    setChats(
-      remainingChats
+  function deleteChat(chatId: string) {
+    const target = chats.find(
+      (chat) => chat.id === chatId
     );
 
-    if (
-      activeChatId ===
-      chatId
-    ) {
-      if (
-        remainingChats.length >
-        0
-      ) {
-        const nextChat =
-          [...remainingChats].sort(
-            (a, b) =>
-              b.updatedAt -
-              a.updatedAt
-          )[0];
+    if (!target) return;
 
-        setActiveChatId(
-          nextChat.id
+    if (confirmDeleteChats) {
+      const confirmed =
+        window.confirm(
+          `Delete "${target.title}"?`
         );
-      } else {
-        setActiveChatId(null);
-      }
 
-      setIsTyping(false);
-      setCurrentPage("home");
+      if (!confirmed) return;
     }
+
+    const remaining =
+      chats.filter(
+        (chat) => chat.id !== chatId
+      );
+
+    setChats(remaining);
+
+    if (activeChatId === chatId) {
+      const next =
+        remaining[0] ?? null;
+
+      setActiveChatId(
+        next?.id ?? null
+      );
+    }
+
+    showStatus("Conversation deleted");
   }
 
-  function startRename(
-    chat: Chat
-  ) {
+  function beginRename(chat: Chat) {
     setEditingChatId(chat.id);
-    setEditingTitle(
-      chat.title
-    );
+    setEditingTitle(chat.title);
   }
 
   function cancelRename() {
@@ -792,9 +667,7 @@ export default function Home() {
     setEditingTitle("");
   }
 
-  function saveRename(
-    chatId: string
-  ) {
+  function saveRename(chatId: string) {
     const title =
       editingTitle.trim();
 
@@ -803,16 +676,13 @@ export default function Home() {
       return;
     }
 
-    setChats((prev) =>
-      prev.map((chat) =>
+    setChats((current) =>
+      current.map((chat) =>
         chat.id === chatId
           ? {
               ...chat,
               title:
-                title.substring(
-                  0,
-                  60
-                ),
+                title.slice(0, 80),
               updatedAt:
                 Date.now(),
             }
@@ -821,119 +691,112 @@ export default function Home() {
     );
 
     cancelRename();
+    showStatus("Conversation renamed");
   }
 
   async function copyMessage(
-    content: string,
-    messageIndex: number
+    messageId: string,
+    content: string
   ) {
-    const copyKey =
-      `${activeChatId}-${messageIndex}`;
-
     try {
       await navigator.clipboard.writeText(
         content
       );
 
-      setCopiedMessage(copyKey);
+      setCopiedId(messageId);
 
-      if (copyTimer.current) {
+      if (copyTimeout.current) {
         clearTimeout(
-          copyTimer.current
+          copyTimeout.current
         );
       }
 
-      copyTimer.current =
+      copyTimeout.current =
         setTimeout(() => {
-          setCopiedMessage(null);
-          copyTimer.current = null;
+          setCopiedId(null);
         }, 1500);
     } catch {
-      setCopiedMessage(null);
+      showStatus(
+        "Copy failed"
+      );
     }
   }
 
-  function sendMessage() {
-    const text =
-      message.trim();
+  function useQuickPrompt(
+    prompt: string
+  ) {
+    if (!activeChatId) {
+      createAndOpenChat();
+    }
 
-    if (
-      !text ||
-      isTyping
-    ) {
+    setView("chat");
+    setMessage(prompt);
+  }
+
+  async function sendMessage(
+    forcedText?: string
+  ) {
+    const text =
+      (
+        forcedText ??
+        message
+      ).trim();
+
+    if (!text || isTyping) {
       return;
     }
 
-    let chatId =
+    let targetChatId =
       activeChatId;
 
-    let chatForAnswer =
-      activeChat;
+    let history: Message[] = [];
 
-    if (!chatId) {
-      const newChatItem =
-        createChat();
+    if (!targetChatId) {
+      const chat = createChat();
 
-      chatId =
-        newChatItem.id;
+      targetChatId = chat.id;
 
-      chatForAnswer =
-        newChatItem;
-
-      setChats((prev) => [
-        newChatItem,
-        ...prev,
+      setChats((current) => [
+        chat,
+        ...current,
       ]);
 
-      setActiveChatId(
-        chatId
-      );
-    }
-
-    if (!chatForAnswer) {
-      chatForAnswer =
+      setActiveChatId(chat.id);
+    } else {
+      history =
         chats.find(
           (chat) =>
-            chat.id === chatId
-        ) || null;
+            chat.id ===
+            targetChatId
+        )?.messages ?? [];
     }
 
-    const previousMessages =
-      chatForAnswer?.messages ||
-      [];
+    const userMessage =
+      createMessage(
+        "user",
+        text
+      );
 
-    const userMessage: Message = {
-      role: "user",
-      content: text,
-      timestamp: Date.now(),
-    };
-
-    const finalChatId =
-      chatId;
-
-    setChats((prev) =>
-      prev.map((chat) => {
+    setChats((current) =>
+      current.map((chat) => {
         if (
           chat.id !==
-          finalChatId
+          targetChatId
         ) {
           return chat;
         }
 
         return {
           ...chat,
-
           title:
-            chat.messages
-              .length === 0
-              ? createTitle(text)
+            chat.messages.length ===
+            0
+              ? makeTitle(text)
               : chat.title,
-
           messages: [
             ...chat.messages,
             userMessage,
           ],
-
           updatedAt:
             Date.now(),
         };
@@ -942,359 +805,774 @@ export default function Home() {
 
     setMessage("");
     setIsTyping(true);
-    setCopiedMessage(null);
 
-    if (
-      responseTimer.current
-    ) {
-      clearTimeout(
-        responseTimer.current
-      );
-    }
-
-    responseTimer.current =
-      setTimeout(() => {
-        const answer =
-          findAnswer(
-            text,
-            previousMessages
-          );
-
-        const cipherMessage:
-          Message = {
-          role: "cipher",
-          content: answer,
-          timestamp: Date.now(),
-        };
-
-        setChats((prev) =>
-          prev.map((chat) => {
-            if (
-              chat.id !==
-              finalChatId
-            ) {
-              return chat;
-            }
-
-            const lastMessage =
-              chat.messages[
-                chat.messages.length - 1
-              ];
-
-            if (
-              lastMessage?.role ===
-                "cipher" &&
-              lastMessage.content ===
-                answer
-            ) {
-              return chat;
-            }
-
-            return {
-              ...chat,
-
-              messages: [
-                ...chat.messages,
-                cipherMessage,
-              ],
-
-              updatedAt:
-                Date.now(),
-            };
-          })
+    try {
+      const response =
+        await fetch(
+          "/api/chat",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+            body: JSON.stringify({
+              message: text,
+              history,
+              settings: {
+                temperature,
+              },
+            }),
+          }
         );
 
-        setIsTyping(false);
-        responseTimer.current =
-          null;
-      }, 1200);
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "Failed to reach Cipher."
+        );
+      }
+
+      const reply =
+        typeof data.reply ===
+        "string"
+          ? data.reply.trim()
+          : "";
+
+      if (!reply) {
+        throw new Error(
+          "Cipher returned an empty response."
+        );
+      }
+
+      const assistantMessage =
+        createMessage(
+          "assistant",
+          reply
+        );
+
+      setChats((current) =>
+        current.map((chat) => {
+          if (
+            chat.id !==
+            targetChatId
+          ) {
+            return chat;
+          }
+
+          return {
+            ...chat,
+            messages: [
+              ...chat.messages,
+              assistantMessage,
+            ],
+            updatedAt:
+              Date.now(),
+          };
+        })
+      );
+    } catch (error) {
+      console.error(
+        "Cipher request failed:",
+        error
+      );
+
+      const fallback =
+        "I couldn't connect to Cipher right now. Please check your connection and try again.";
+
+      const assistantMessage =
+        createMessage(
+          "assistant",
+          fallback
+        );
+
+      setChats((current) =>
+        current.map((chat) => {
+          if (
+            chat.id !==
+            targetChatId
+          ) {
+            return chat;
+          }
+
+          return {
+            ...chat,
+            messages: [
+              ...chat.messages,
+              assistantMessage,
+            ],
+            updatedAt:
+              Date.now(),
+          };
+        })
+      );
+    } finally {
+      setIsTyping(false);
+    }
   }
 
-  function startQuestion(
-    question: string
-  ) {
-    if (!activeChatId) {
-      const chat =
-        createChat();
-
-      setChats((prev) => [
-        chat,
-        ...prev,
-      ]);
-
-      setActiveChatId(
-        chat.id
+  function clearAllChats() {
+    if (chats.length === 0) {
+      showStatus(
+        "No conversations to clear"
       );
+      return;
     }
 
-    setCurrentPage("home");
-    setMessage(question);
-    setMobileMenuOpen(false);
+    const confirmed =
+      window.confirm(
+        "Clear every Cipher conversation saved on this device?"
+      );
+
+    if (!confirmed) return;
+
+    setChats([]);
+    setActiveChatId(null);
+    setView("chat");
+
+    showStatus(
+      "All conversations cleared"
+    );
   }
 
-  function renderHome() {
-    const currentMessages =
-      activeChat?.messages ||
-      [];
+  function renderBrand() {
+    return (
+      <div
+        className={
+          styles.brandArea
+        }
+      >
+        <button
+          className={
+            styles.brandButton
+          }
+          onClick={() => {
+            setView("chat");
+            setActiveChatId(
+              activeChatId
+            );
+          }}
+          aria-label="Cipher OS"
+        >
+          <div
+            className={
+              styles.brandMark
+            }
+          >
+            C
+          </div>
+
+          {!sidebarCollapsed && (
+            <div
+              className={
+                styles.brandWords
+              }
+            >
+              <strong>
+                CIPHER
+              </strong>
+              <span>OS</span>
+            </div>
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  function renderSidebar() {
+    return (
+      <aside
+        className={`${styles.sidebar} ${
+          sidebarCollapsed
+            ? styles.sidebarCollapsed
+            : ""
+        }`}
+      >
+        {renderBrand()}
+
+        <div
+          className={
+            styles.sidebarSection
+          }
+        >
+          {!sidebarCollapsed && (
+            <div
+              className={
+                styles.sidebarLabel
+              }
+            >
+              WORKSPACE
+            </div>
+          )}
+
+          <button
+            className={
+              styles.sidebarNewChat
+            }
+            onClick={
+              createAndOpenChat
+            }
+          >
+            <span
+              className={
+                styles.newChatIcon
+              }
+            >
+              <Icon
+                name="plus"
+                size={17}
+              />
+            </span>
+
+            {!sidebarCollapsed && (
+              <span>
+                New chat
+              </span>
+            )}
+          </button>
+
+          <div
+            className={
+              styles.navList
+            }
+          >
+            {NAV_ITEMS.map(
+              (item) => (
+                <button
+                  key={item.id}
+                  className={
+                    view ===
+                      item.id
+                      ? styles.navActive
+                      : styles.navButton
+                  }
+                  onClick={() => {
+                    setView(
+                      item.id
+                    );
+
+                    if (
+                      item.id ===
+                      "chats"
+                    ) {
+                      setSearch(
+                        ""
+                      );
+                    }
+                  }}
+                  title={
+                    sidebarCollapsed
+                      ? item.label
+                      : undefined
+                  }
+                >
+                  <span
+                    className={
+                      styles.navIcon
+                    }
+                  >
+                    {item.icon}
+                  </span>
+
+                  {!sidebarCollapsed && (
+                    <>
+                      <span>
+                        {
+                          item.label
+                        }
+                      </span>
+
+                      {item.id ===
+                        "chats" &&
+                        chats.length >
+                          0 && (
+                          <span
+                            className={
+                              styles.navBadge
+                            }
+                          >
+                            {
+                              chats.length >
+                              99
+                                ? "99+"
+                                : chats.length
+                            }
+                          </span>
+                        )}
+                    </>
+                  )}
+                </button>
+              )
+            )}
+          </div>
+        </div>
+
+        <div
+          className={
+            styles.sidebarBottom
+          }
+        >
+          {!sidebarCollapsed && (
+            <div
+              className={
+                styles.sidebarLabel
+              }
+            >
+              SYSTEM
+            </div>
+          )}
+
+          <button
+            className={
+              view === "settings"
+                ? styles.navActive
+                : styles.navButton
+            }
+            onClick={() =>
+              openSettings(
+                settingsSection
+              )
+            }
+            title={
+              sidebarCollapsed
+                ? "Settings"
+                : undefined
+            }
+          >
+            <span
+              className={
+                styles.navIcon
+              }
+            >
+              ⚙
+            </span>
+
+            {!sidebarCollapsed && (
+              <span>
+                Settings
+              </span>
+            )}
+          </button>
+
+          <div
+            className={
+              styles.systemCard
+            }
+          >
+            <span
+              className={
+                styles.systemDot
+              }
+            />
+
+            {!sidebarCollapsed && (
+              <div>
+                <strong>
+                  System online
+                </strong>
+                <small>
+                  OpenRouter connected
+                </small>
+              </div>
+            )}
+          </div>
+
+          <button
+            className={
+              styles.collapseButton
+            }
+            onClick={() =>
+              setSidebarCollapsed(
+                (value) => !value
+              )
+            }
+            title={
+              sidebarCollapsed
+                ? "Expand sidebar"
+                : "Collapse sidebar"
+            }
+          >
+            <span>
+              {sidebarCollapsed
+                ? "›"
+                : "‹"}
+            </span>
+
+            {!sidebarCollapsed && (
+              <span>
+                Collapse
+              </span>
+            )}
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
+  function renderChatHeader() {
+    const title =
+      activeChat?.title ??
+      "New conversation";
 
     return (
       <div
         className={
-          styles.homeContainer
+          styles.chatHeader
         }
       >
         <div
           className={
-            styles.chat
+            styles.chatHeaderTitle
           }
         >
-          {currentMessages.length ===
-          0 ? (
-            <div
+          <span
+            className={
+              styles.chatHeaderDot
+            }
+          />
+
+          <div>
+            <span
               className={
-                styles.welcome
+                styles.chatHeaderEyebrow
               }
             >
-              <div
+              CIPHER OS
+            </span>
+
+            <h2>{title}</h2>
+          </div>
+        </div>
+
+        <div
+          className={
+            styles.chatHeaderActions
+          }
+        >
+          {statusMessage && (
+            <span
+              className={
+                styles.statusToast
+              }
+            >
+              {statusMessage}
+            </span>
+          )}
+
+          {activeChat && (
+            <>
+              <button
                 className={
-                  styles.avatar
+                  styles.headerIconButton
+                }
+                onClick={() =>
+                  beginRename(
+                    activeChat
+                  )
+                }
+                title="Rename conversation"
+                aria-label="Rename conversation"
+              >
+                <Icon
+                  name="edit"
+                  size={16}
+                />
+              </button>
+
+              <button
+                className={`${styles.headerIconButton} ${styles.headerDanger}`}
+                onClick={() =>
+                  deleteChat(
+                    activeChat.id
+                  )
+                }
+                title="Delete conversation"
+                aria-label="Delete conversation"
+              >
+                <Icon
+                  name="trash"
+                  size={16}
+                />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderWelcome() {
+    return (
+      <div
+        className={
+          styles.welcomeArea
+        }
+      >
+        <div
+          className={
+            styles.welcomeOrb
+          }
+        >
+          <span>C</span>
+        </div>
+
+        <div
+          className={
+            styles.welcomeEyebrow
+          }
+        >
+          YOUR PERSONAL AI WORKSPACE
+        </div>
+
+        <h1>
+          Think clearly.
+          <br />
+          <span>Build boldly.</span>
+        </h1>
+
+        <p>
+          Cipher helps you learn,
+          create, solve problems
+          and turn ideas into
+          useful outcomes.
+        </p>
+
+        <div
+          className={
+            styles.quickGrid
+          }
+        >
+          {QUICK_ACTIONS.map(
+            (action) => (
+              <button
+                key={action.title}
+                className={
+                  styles.quickCard
+                }
+                onClick={() =>
+                  useQuickPrompt(
+                    action.prompt
+                  )
                 }
               >
-                C
-              </div>
+                <span
+                  className={
+                    styles.quickIcon
+                  }
+                >
+                  {action.icon}
+                </span>
 
-              <h2>
-                Welcome to
-                Cipher OS
-              </h2>
+                <span
+                  className={
+                    styles.quickCopy
+                  }
+                >
+                  <strong>
+                    {action.title}
+                  </strong>
+                  <small>
+                    {
+                      action.description
+                    }
+                  </small>
+                </span>
 
-              <p>
-                Your intelligent
-                workspace for
-                thinking,
-                creating,
-                learning and
-                getting things
-                done.
-              </p>
+                <span
+                  className={
+                    styles.quickArrow
+                  }
+                >
+                  →
+                </span>
+              </button>
+            )
+          )}
+        </div>
+      </div>
+    );
+  }
 
-              <div
-                className={
-                  styles.suggestions
+  function renderMessage(
+    current: Message,
+    index: number
+  ) {
+    const isUser =
+      current.role ===
+      "user";
+
+    return (
+      <div
+        key={current.id}
+        className={`${styles.messageRow} ${
+          isUser
+            ? styles.userRow
+            : styles.assistantRow
+        } ${
+          compactMessages
+            ? styles.compactMessage
+            : ""
+        }`}
+      >
+        <div
+          className={
+            styles.messageAvatar
+          }
+        >
+          {isUser
+            ? "You"
+            : "C"}
+        </div>
+
+        <div
+          className={
+            styles.messageBody
+          }
+        >
+          <div
+            className={
+              styles.messageMeta
+            }
+          >
+            <strong>
+              {isUser
+                ? "You"
+                : "Cipher"}
+            </strong>
+
+            {showTimestamps && (
+              <span>
+                {formatTime(
+                  current.timestamp
+                )}
+              </span>
+            )}
+          </div>
+
+          <div
+            className={
+              styles.messageBubble
+            }
+          >
+            <p>
+              {current.content}
+            </p>
+          </div>
+
+          {!isUser && (
+            <div
+              className={
+                styles.messageTools
+              }
+            >
+              <button
+                onClick={() =>
+                  copyMessage(
+                    current.id,
+                    current.content
+                  )
                 }
               >
-                <button
-                  onClick={() =>
-                    startQuestion(
-                      "What can you help me with?"
-                    )
-                  }
-                >
-                  What can you
-                  help me with?
-                </button>
+                <Icon
+                  name="copy"
+                  size={13}
+                />
 
-                <button
-                  onClick={() =>
-                    startQuestion(
-                      "Explain something to me"
-                    )
-                  }
-                >
-                  Explain
-                  something to me
-                </button>
+                {copiedId ===
+                current.id
+                  ? "Copied"
+                  : "Copy"}
+              </button>
 
-                <button
-                  onClick={() =>
-                    startQuestion(
-                      "Help me solve a problem"
-                    )
-                  }
-                >
-                  Help me solve a
-                  problem
-                </button>
-              </div>
+              <span>
+                #{index + 1}
+              </span>
             </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderChat() {
+    const messages =
+      activeChat?.messages ??
+      [];
+
+    return (
+      <section
+        className={
+          styles.chatWorkspace
+        }
+      >
+        {renderChatHeader()}
+
+        <div
+          className={
+            styles.chatScroll
+          }
+        >
+          {messages.length === 0 ? (
+            renderWelcome()
           ) : (
             <div
               className={
-                styles.messages
+                styles.messageList
               }
             >
-              {currentMessages.map(
-                (msg, index) => {
-                  const copyKey =
-                    `${activeChatId}-${index}`;
-
-                  return (
-                    <div
-                      key={`${msg.role}-${index}`}
-                      className={
-                        msg.role ===
-                        "user"
-                          ? styles.userMessage
-                          : styles.assistantMessage
-                      }
-                    >
-                      <div
-                        className={
-                          styles.messageHeader
-                        }
-                      >
-                        <div
-                          className={
-                            styles.messageIdentity
-                          }
-                        >
-                          {msg.role ===
-                          "cipher" ? (
-                            <div
-                              className={
-                                styles.messageAvatar
-                              }
-                            >
-                              C
-                            </div>
-                          ) : (
-                            <div
-                              className={
-                                styles.userAvatar
-                              }
-                            >
-                              You
-                            </div>
-                          )}
-
-                          <div>
-                            <div
-                              className={
-                                styles.messageName
-                              }
-                            >
-                              {msg.role ===
-                              "user"
-                                ? "You"
-                                : "Cipher"}
-                            </div>
-
-                            {msg.timestamp && (
-                              <div
-                                className={
-                                  styles.messageTime
-                                }
-                              >
-                                {formatTime(
-                                  msg.timestamp
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {msg.role ===
-                          "cipher" && (
-                          <div
-                            className={
-                              styles.messageActions
-                            }
-                          >
-                            <button
-                              className={
-                                styles.copyButton
-                              }
-                              onClick={() =>
-                                copyMessage(
-                                  msg.content,
-                                  index
-                                )
-                              }
-                              title="Copy response"
-                              aria-label="Copy Cipher response"
-                            >
-                              {copiedMessage ===
-                              copyKey
-                                ? "✓ Copied"
-                                : "📋 Copy"}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
-                      <div
-                        className={
-                          styles.messageContent
-                        }
-                      >
-                        <p>
-                          {msg.content}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                }
+              {messages.map(
+                renderMessage
               )}
 
               {isTyping && (
                 <div
-                  className={
-                    styles.assistantMessage
-                  }
+                  className={`${styles.messageRow} ${styles.assistantRow}`}
                 >
                   <div
                     className={
-                      styles.messageHeader
+                      styles.messageAvatar
                     }
                   >
-                    <div
-                      className={
-                        styles.messageIdentity
-                      }
-                    >
-                      <div
-                        className={
-                          styles.messageAvatar
-                        }
-                      >
-                        C
-                      </div>
-
-                      <div>
-                        <div
-                          className={
-                            styles.messageName
-                          }
-                        >
-                          Cipher
-                        </div>
-
-                        <div
-                          className={
-                            styles.messageTime
-                          }
-                        >
-                          Thinking...
-                        </div>
-                      </div>
-                    </div>
+                    C
                   </div>
 
                   <div
                     className={
-                      styles.typing
+                      styles.messageBody
                     }
                   >
-                    <span />
-                    <span />
-                    <span />
+                    <div
+                      className={
+                        styles.messageMeta
+                      }
+                    >
+                      <strong>
+                        Cipher
+                      </strong>
+                      <span>
+                        Thinking
+                      </span>
+                    </div>
+
+                    <div
+                      className={
+                        styles.typingBubble
+                      }
+                    >
+                      <i />
+                      <i />
+                      <i />
+                    </div>
                   </div>
                 </div>
               )}
 
               <div
                 ref={
-                  messagesEndRef
+                  bottomRef
                 }
               />
             </div>
@@ -1303,234 +1581,228 @@ export default function Home() {
 
         <div
           className={
-            styles.inputArea
+            styles.composerDock
           }
         >
           <div
             className={
-              styles.inputBox
+              styles.composer
             }
           >
-            <input
-              type="text"
-              placeholder="Ask Cipher anything..."
+            <textarea
               value={message}
-              onChange={(e) =>
+              onChange={(event) =>
                 setMessage(
-                  e.target.value
+                  event.target.value
                 )
               }
-              onKeyDown={(e) => {
+              onKeyDown={(event) => {
                 if (
-                  e.key ===
-                  "Enter"
+                  event.key ===
+                    "Enter" &&
+                  !event.shiftKey &&
+                  enterToSend
                 ) {
+                  event.preventDefault();
                   sendMessage();
                 }
               }}
+              placeholder="Message Cipher..."
+              rows={1}
+              aria-label="Message Cipher"
             />
 
             <button
               className={
                 styles.sendButton
               }
-              onClick={
-                sendMessage
+              onClick={() =>
+                sendMessage()
               }
               disabled={
                 !message.trim() ||
                 isTyping
               }
-              aria-label="Send message"
               title="Send message"
+              aria-label="Send message"
             >
-              ↑
+              <Icon
+                name="send"
+                size={17}
+              />
             </button>
           </div>
 
-          <p
+          <div
             className={
-              styles.disclaimer
+              styles.composerFooter
             }
           >
-            Cipher OS can make
-            mistakes. Check
-            important
-            information.
-          </p>
+            <span>
+              {enterToSend
+                ? "Enter to send"
+                : "Click send to submit"}
+            </span>
+
+            <span>
+              Cipher can make mistakes.
+            </span>
+          </div>
         </div>
-      </div>
+      </section>
     );
   }
 
   function renderChats() {
     return (
-      <div
+      <section
         className={
-          styles.pageContent
+          styles.contentPage
         }
       >
         <div
-          style={{
-            display: "flex",
-            justifyContent:
-              "space-between",
-            alignItems:
-              "center",
-            gap: "15px",
-          }}
+          className={
+            styles.pageIntro
+          }
         >
           <div>
-            <h2>Chats</h2>
-
-            <p
+            <span
               className={
-                styles.pageDescription
+                styles.pageEyebrow
               }
             >
-              Your saved
-              conversations
-              with Cipher.
+              CONVERSATIONS
+            </span>
+
+            <h1>
+              Your chats
+            </h1>
+
+            <p>
+              Search, revisit and
+              manage your previous
+              conversations.
             </p>
           </div>
 
           <button
             className={
-              styles.newChat
+              styles.primaryButton
             }
-            onClick={newChat}
-            style={{
-              width: "auto",
-              marginBottom: 0,
-              whiteSpace:
-                "nowrap",
-            }}
+            onClick={
+              createAndOpenChat
+            }
           >
-            + New Chat
+            <Icon
+              name="plus"
+              size={15}
+            />
+            New chat
           </button>
         </div>
 
-        {chats.length > 0 && (
-          <div
-            style={{
-              marginTop:
-                "25px",
-            }}
-          >
-            <input
-              type="text"
-              value={
-                searchQuery
-              }
-              onChange={(e) =>
-                setSearchQuery(
-                  e.target.value
-                )
-              }
-              placeholder="Search chats..."
-              style={{
-                width: "100%",
-                padding:
-                  "13px 15px",
-                borderRadius:
-                  "10px",
-                border:
-                  "1px solid #30353d",
-                outline: "none",
-                background:
-                  "#15191f",
-                color: "white",
-                fontSize:
-                  "14px",
-                boxSizing:
-                  "border-box",
-              }}
-            />
-          </div>
-        )}
+        <div
+          className={
+            styles.searchBar
+          }
+        >
+          <Icon
+            name="search"
+            size={17}
+          />
 
-        {chats.length === 0 ? (
-          <div
-            className={
-              styles.emptyState
+          <input
+            value={search}
+            onChange={(event) =>
+              setSearch(
+                event.target.value
+              )
             }
-          >
-            <div>💬</div>
+            placeholder="Search conversations"
+            aria-label="Search conversations"
+          />
+        </div>
 
-            <h3>
-              No chats yet
-            </h3>
-
-            <p>
-              Start a new
-              conversation
-              with Cipher.
-            </p>
-          </div>
-        ) : filteredChats.length ===
+        <div
+          className={
+            styles.chatList
+          }
+        >
+          {filteredChats.length ===
           0 ? (
-          <div
-            className={
-              styles.emptyState
-            }
-          >
-            <div>🔎</div>
+            <div
+              className={
+                styles.noResults
+              }
+            >
+              <div
+                className={
+                  styles.noResultsIcon
+                }
+              >
+                ◌
+              </div>
 
-            <h3>
-              No chats found
-            </h3>
+              <h3>
+                {search
+                  ? "No matches"
+                  : "No conversations yet"}
+              </h3>
 
-            <p>
-              Try a different
-              search term.
-            </p>
-          </div>
-        ) : (
-          <div
-            className={
-              styles.chatHistory
-            }
-          >
-            {filteredChats.map(
+              <p>
+                {search
+                  ? "Try a different search term."
+                  : "Start your first conversation with Cipher."}
+              </p>
+
+              {!search && (
+                <button
+                  className={
+                    styles.secondaryButton
+                  }
+                  onClick={
+                    createAndOpenChat
+                  }
+                >
+                  Start a conversation
+                </button>
+              )}
+            </div>
+          ) : (
+            filteredChats.map(
               (chat) => (
                 <div
                   key={chat.id}
                   className={
-                    styles.historyItem
+                    styles.chatListItem
                   }
                 >
                   {editingChatId ===
                   chat.id ? (
                     <div
-                      style={{
-                        flex: 1,
-                        display:
-                          "flex",
-                        gap: "8px",
-                        alignItems:
-                          "center",
-                        padding:
-                          "8px",
-                      }}
+                      className={
+                        styles.renameRow
+                      }
                     >
                       <input
-                        autoFocus
                         value={
                           editingTitle
                         }
+                        autoFocus
                         onChange={(
-                          e
+                          event
                         ) =>
                           setEditingTitle(
-                            e.target
+                            event
+                              .target
                               .value
                           )
                         }
                         onKeyDown={(
-                          e
+                          event
                         ) => {
                           if (
-                            e.key ===
+                            event.key ===
                             "Enter"
                           ) {
                             saveRename(
@@ -1539,33 +1811,15 @@ export default function Home() {
                           }
 
                           if (
-                            e.key ===
+                            event.key ===
                             "Escape"
                           ) {
                             cancelRename();
                           }
                         }}
-                        style={{
-                          flex: 1,
-                          padding:
-                            "10px 12px",
-                          borderRadius:
-                            "8px",
-                          border:
-                            "1px solid #30353d",
-                          outline:
-                            "none",
-                          background:
-                            "#101318",
-                          color:
-                            "white",
-                        }}
                       />
 
                       <button
-                        className={
-                          styles.deleteChat
-                        }
                         onClick={() =>
                           saveRename(
                             chat.id
@@ -1573,13 +1827,13 @@ export default function Home() {
                         }
                         title="Save"
                       >
-                        ✓
+                        <Icon
+                          name="check"
+                          size={16}
+                        />
                       </button>
 
                       <button
-                        className={
-                          styles.deleteChat
-                        }
                         onClick={
                           cancelRename
                         }
@@ -1592,7 +1846,7 @@ export default function Home() {
                     <>
                       <button
                         className={
-                          styles.historyButton
+                          styles.chatListMain
                         }
                         onClick={() =>
                           openChat(
@@ -1600,552 +1854,1080 @@ export default function Home() {
                           )
                         }
                       >
-                        <span>
-                          💬
-                        </span>
+                        <div
+                          className={
+                            styles.chatListIcon
+                          }
+                        >
+                          ◌
+                        </div>
 
-                        <div>
+                        <div
+                          className={
+                            styles.chatListText
+                          }
+                        >
                           <strong>
                             {
                               chat.title
                             }
                           </strong>
 
-                          <small>
-                            {
-                              chat
-                                .messages
-                                .length
-                            }{" "}
-                            message
-                            {chat
-                              .messages
-                              .length !==
-                            1
-                              ? "s"
-                              : ""}
-                          </small>
+                          <div>
+                            <span>
+                              {
+                                chat
+                                  .messages
+                                  .length
+                              }{" "}
+                              messages
+                            </span>
+
+                            <span>
+                              •
+                            </span>
+
+                            <span>
+                              {formatDate(
+                                chat.updatedAt
+                              )}
+                            </span>
+                          </div>
                         </div>
+
+                        <Icon
+                          name="chevron"
+                          size={17}
+                        />
                       </button>
 
-                      <button
+                      <div
                         className={
-                          styles.deleteChat
+                          styles.chatListActions
                         }
-                        onClick={() =>
-                          startRename(
-                            chat
-                          )
-                        }
-                        title="Rename chat"
                       >
-                        ✏️
-                      </button>
+                        <button
+                          onClick={() =>
+                            beginRename(
+                              chat
+                            )
+                          }
+                          title="Rename"
+                        >
+                          <Icon
+                            name="edit"
+                            size={15}
+                          />
+                        </button>
 
-                      <button
-                        className={
-                          styles.deleteChat
-                        }
-                        onClick={() =>
-                          deleteChat(
-                            chat.id
-                          )
-                        }
-                        title="Delete chat"
-                      >
-                        🗑️
-                      </button>
+                        <button
+                          onClick={() =>
+                            deleteChat(
+                              chat.id
+                            )
+                          }
+                          title="Delete"
+                        >
+                          <Icon
+                            name="trash"
+                            size={15}
+                          />
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
               )
-            )}
-          </div>
-        )}
-      </div>
+            )
+          )}
+        </div>
+      </section>
     );
   }
 
   function renderExplore() {
     return (
-      <div
+      <section
         className={
-          styles.pageContent
+          styles.contentPage
         }
       >
-        <h2>
-          Explore
-        </h2>
-
-        <p
-          className={
-            styles.pageDescription
-          }
-        >
-          Explore what Cipher
-          OS can help you
-          with.
-        </p>
-
         <div
           className={
-            styles.featureGrid
+            styles.pageIntro
           }
         >
-          <div
-            className={
-              styles.featureCard
-            }
-          >
-            <span>🧠</span>
+          <div>
+            <span
+              className={
+                styles.pageEyebrow
+              }
+            >
+              EXPLORE
+            </span>
 
-            <h3>
-              Knowledge
-            </h3>
-
-            <p>
-              Ask Cipher
-              questions from
-              its knowledge
-              base.
-            </p>
-          </div>
-
-          <div
-            className={
-              styles.featureCard
-            }
-          >
-            <span>💡</span>
-
-            <h3>
-              Problem Solving
-            </h3>
+            <h1>
+              Everything in one workspace.
+            </h1>
 
             <p>
-              Work through
-              questions and
-              everyday
-              problems.
-            </p>
-          </div>
-
-          <div
-            className={
-              styles.featureCard
-            }
-          >
-            <span>💻</span>
-
-            <h3>
-              Technology
-            </h3>
-
-            <p>
-              Explore
-              programming and
-              technology
-              topics.
-            </p>
-          </div>
-
-          <div
-            className={
-              styles.featureCard
-            }
-          >
-            <span>🎨</span>
-
-            <h3>
-              Creative
-            </h3>
-
-            <p>
-              Use Cipher as a
-              creative thinking
-              workspace.
+              Cipher is designed to
+              be more than a chat box.
             </p>
           </div>
         </div>
+
+        <div
+          className={
+            styles.exploreHero
+          }
+        >
+          <div>
+            <span
+              className={
+                styles.exploreHeroLabel
+              }
+            >
+              CIPHER OS
+            </span>
+
+            <h2>
+              A focused place to
+              think, create and
+              build.
+            </h2>
+
+            <p>
+              Use conversations as
+              working sessions,
+              revisit ideas later,
+              and keep everything
+              organized from one
+              interface.
+            </p>
+          </div>
+
+          <div
+            className={
+              styles.exploreOrb
+            }
+          >
+            C
+          </div>
+        </div>
+
+        <div
+          className={
+            styles.exploreGrid
+          }
+        >
+          <div
+            className={
+              styles.exploreCard
+            }
+          >
+            <span>
+              01
+            </span>
+            <strong>
+              Knowledge
+            </strong>
+            <p>
+              Ask questions,
+              understand concepts
+              and learn through
+              conversation.
+            </p>
+          </div>
+
+          <div
+            className={
+              styles.exploreCard
+            }
+          >
+            <span>
+              02
+            </span>
+            <strong>
+              Problem solving
+            </strong>
+            <p>
+              Break complicated
+              tasks into clear,
+              manageable steps.
+            </p>
+          </div>
+
+          <div
+            className={
+              styles.exploreCard
+            }
+          >
+            <span>
+              03
+            </span>
+            <strong>
+              Technology
+            </strong>
+            <p>
+              Work through code,
+              architecture and
+              technical ideas.
+            </p>
+          </div>
+
+          <div
+            className={
+              styles.exploreCard
+            }
+          >
+            <span>
+              04
+            </span>
+            <strong>
+              Creative work
+            </strong>
+            <p>
+              Brainstorm, write,
+              refine and develop
+              ideas into something
+              useful.
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  function renderSettingRow({
+    title,
+    description,
+    children,
+  }: {
+    title: string;
+    description: string;
+    children: React.ReactNode;
+  }) {
+    return (
+      <div
+        className={
+          styles.settingRow
+        }
+      >
+        <div
+          className={
+            styles.settingCopy
+          }
+        >
+          <strong>
+            {title}
+          </strong>
+          <span>
+            {description}
+          </span>
+        </div>
+
+        {children}
       </div>
+    );
+  }
+
+  function renderToggle(
+    enabled: boolean,
+    onChange: () =>
+      void
+  ) {
+    return (
+      <button
+        className={`${styles.toggle} ${
+          enabled
+            ? styles.toggleOn
+            : ""
+        }`}
+        onClick={onChange}
+        aria-pressed={enabled}
+      >
+        <span />
+      </button>
     );
   }
 
   function renderSettings() {
     return (
-      <div
+      <section
         className={
-          styles.pageContent
+          styles.settingsPage
         }
       >
-        <h2>
-          Settings
-        </h2>
-
-        <p
-          className={
-            styles.pageDescription
-          }
-        >
-          Manage your Cipher
-          OS preferences.
-        </p>
-
         <div
           className={
-            styles.settingsCard
+            styles.settingsLayout
           }
         >
-          <div>
-            <strong>
-              Appearance
-            </strong>
-
-            <p>
-              Dark mode
-            </p>
-          </div>
-
-          <span
+          <div
             className={
-              styles.settingStatus
+              styles.settingsNav
             }
           >
-            Active
-          </span>
-        </div>
+            <div
+              className={
+                styles.settingsHeading
+              }
+            >
+              <span
+                className={
+                  styles.pageEyebrow
+                }
+              >
+                CIPHER OS
+              </span>
 
-        <div
-          className={
-            styles.settingsCard
-          }
-        >
-          <div>
-            <strong>
-              Knowledge Base
-            </strong>
+              <h1>
+                Settings
+              </h1>
 
-            <p>
-              Local Cipher
-              knowledge system
-            </p>
+              <p>
+                Customize your
+                workspace.
+              </p>
+            </div>
+
+            <div
+              className={
+                styles.settingsMenu
+              }
+            >
+              {SETTINGS_ITEMS.map(
+                (item) => (
+                  <button
+                    key={
+                      item.id
+                    }
+                    className={
+                      settingsSection ===
+                      item.id
+                        ? styles.settingsMenuActive
+                        : styles.settingsMenuButton
+                    }
+                    onClick={() =>
+                      setSettingsSection(
+                        item.id
+                      )
+                    }
+                  >
+                    <span>
+                      {
+                        item.icon
+                      }
+                    </span>
+                    {
+                      item.label
+                    }
+                  </button>
+                )
+              )}
+            </div>
           </div>
 
-          <span
+          <div
             className={
-              styles.settingStatus
+              styles.settingsPanel
             }
           >
-            Active
-          </span>
-        </div>
+            {settingsSection ===
+              "general" && (
+              <>
+                <div
+                  className={
+                    styles.settingsPanelHeader
+                  }
+                >
+                  <h2>
+                    General
+                  </h2>
+                  <p>
+                    Basic controls for
+                    how Cipher OS
+                    behaves.
+                  </p>
+                </div>
 
-        <div
-          className={
-            styles.settingsCard
-          }
-        >
-          <div>
-            <strong>
-              Chat Memory
-            </strong>
+                <div
+                  className={
+                    styles.settingsCard
+                  }
+                >
+                  {renderSettingRow(
+                    {
+                      title:
+                        "Notifications",
+                      description:
+                        "Allow Cipher OS to show workspace notifications.",
+                      children:
+                        renderToggle(
+                          notifications,
+                          () =>
+                            setNotifications(
+                              (
+                                value
+                              ) =>
+                                !value
+                            )
+                        ),
+                    }
+                  )}
 
-            <p>
-              Conversations
-              saved locally
-            </p>
+                  {renderSettingRow(
+                    {
+                      title:
+                        "Enter to send",
+                      description:
+                        "Press Enter to send a message instead of creating a new line.",
+                      children:
+                        renderToggle(
+                          enterToSend,
+                          () =>
+                            setEnterToSend(
+                              (
+                                value
+                              ) =>
+                                !value
+                            )
+                        ),
+                    }
+                  )}
+                </div>
+
+                <div
+                  className={
+                    styles.settingsCard
+                  }
+                >
+                  <div
+                    className={
+                      styles.cardTitle
+                    }
+                  >
+                    Workspace
+                  </div>
+
+                  {renderSettingRow(
+                    {
+                      title:
+                        "Sidebar",
+                      description:
+                        "Choose how much navigation space you want.",
+                      children: (
+                        <button
+                          className={
+                            styles.selectButton
+                          }
+                          onClick={() =>
+                            setSidebarCollapsed(
+                              (
+                                value
+                              ) =>
+                                !value
+                            )
+                          }
+                        >
+                          {sidebarCollapsed
+                            ? "Compact"
+                            : "Expanded"}
+                        </button>
+                      ),
+                    }
+                  )}
+                </div>
+              </>
+            )}
+
+            {settingsSection ===
+              "appearance" && (
+              <>
+                <div
+                  className={
+                    styles.settingsPanelHeader
+                  }
+                >
+                  <h2>
+                    Appearance
+                  </h2>
+
+                  <p>
+                    Make Cipher feel
+                    right for your
+                    workspace.
+                  </p>
+                </div>
+
+                <div
+                  className={
+                    styles.themeGrid
+                  }
+                >
+                  <button
+                    className={`${styles.themeCard} ${
+                      theme ===
+                      "light"
+                        ? styles.themeCardActive
+                        : ""
+                    }`}
+                    onClick={() =>
+                      updateTheme(
+                        "light"
+                      )
+                    }
+                  >
+                    <div
+                      className={
+                        styles.themePreviewLight
+                      }
+                    >
+                      <div />
+                      <div />
+                      <div />
+                    </div>
+
+                    <div
+                      className={
+                        styles.themeCardText
+                      }
+                    >
+                      <strong>
+                        Light
+                      </strong>
+
+                      <span>
+                        Bright and
+                        minimal
+                      </span>
+                    </div>
+
+                    {theme ===
+                      "light" && (
+                      <span
+                        className={
+                          styles.themeCheck
+                        }
+                      >
+                        <Icon
+                          name="check"
+                          size={15}
+                        />
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    className={`${styles.themeCard} ${
+                      theme ===
+                      "dark"
+                        ? styles.themeCardActive
+                        : ""
+                    }`}
+                    onClick={() =>
+                      updateTheme(
+                        "dark"
+                      )
+                    }
+                  >
+                    <div
+                      className={
+                        styles.themePreviewDark
+                      }
+                    >
+                      <div />
+                      <div />
+                      <div />
+                    </div>
+
+                    <div
+                      className={
+                        styles.themeCardText
+                      }
+                    >
+                      <strong>
+                        Dark
+                      </strong>
+
+                      <span>
+                        Focused and
+                        immersive
+                      </span>
+                    </div>
+
+                    {theme ===
+                      "dark" && (
+                      <span
+                        className={
+                          styles.themeCheck
+                        }
+                      >
+                        <Icon
+                          name="check"
+                          size={15}
+                        />
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                <div
+                  className={
+                    styles.settingsCard
+                  }
+                >
+                  <div
+                    className={
+                      styles.cardTitle
+                    }
+                  >
+                    Interface
+                  </div>
+
+                  {renderSettingRow(
+                    {
+                      title:
+                        "Compact messages",
+                      description:
+                        "Reduce vertical spacing between chat messages.",
+                      children:
+                        renderToggle(
+                          compactMessages,
+                          () =>
+                            setCompactMessages(
+                              (
+                                value
+                              ) =>
+                                !value
+                            )
+                        ),
+                    }
+                  )}
+
+                  {renderSettingRow(
+                    {
+                      title:
+                        "Show timestamps",
+                      description:
+                        "Display the time beside each message.",
+                      children:
+                        renderToggle(
+                          showTimestamps,
+                          () =>
+                            setShowTimestamps(
+                              (
+                                value
+                              ) =>
+                                !value
+                            )
+                        ),
+                    }
+                  )}
+                </div>
+              </>
+            )}
+
+            {settingsSection ===
+              "chat" && (
+              <>
+                <div
+                  className={
+                    styles.settingsPanelHeader
+                  }
+                >
+                  <h2>
+                    Chat
+                  </h2>
+                  <p>
+                    Tune your
+                    conversation
+                    experience.
+                  </p>
+                </div>
+
+                <div
+                  className={
+                    styles.settingsCard
+                  }
+                >
+                  <div
+                    className={
+                      styles.cardTitle
+                    }
+                  >
+                    Response behavior
+                  </div>
+
+                  <div
+                    className={
+                      styles.rangeBlock
+                    }
+                  >
+                    <div
+                      className={
+                        styles.rangeHeader
+                      }
+                    >
+                      <div>
+                        <strong>
+                          Creativity
+                        </strong>
+                        <span>
+                          Controls how
+                          varied the AI
+                          responses can
+                          be.
+                        </span>
+                      </div>
+
+                      <strong>
+                        {temperature.toFixed(
+                          1
+                        )}
+                      </strong>
+                    </div>
+
+                    <input
+                      className={
+                        styles.rangeInput
+                      }
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={
+                        temperature
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setTemperature(
+                          Number(
+                            event
+                              .target
+                              .value
+                          )
+                        )
+                      }
+                    />
+
+                    <div
+                      className={
+                        styles.rangeLabels
+                      }
+                    >
+                      <span>
+                        Precise
+                      </span>
+                      <span>
+                        Balanced
+                      </span>
+                      <span>
+                        Creative
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className={
+                    styles.settingsCard
+                  }
+                >
+                  {renderSettingRow(
+                    {
+                      title:
+                        "Local conversation history",
+                      description:
+                        "Keep conversations saved in this browser.",
+                      children: (
+                        <span
+                          className={
+                            styles.activePill
+                          }
+                        >
+                          Active
+                        </span>
+                      ),
+                    }
+                  )}
+
+                  {renderSettingRow(
+                    {
+                      title:
+                        "History storage",
+                      description:
+                        "Current conversations are stored locally on this device.",
+                      children: (
+                        <span
+                          className={
+                            styles.storagePill
+                          }
+                        >
+                          Local
+                        </span>
+                      ),
+                    }
+                  )}
+                </div>
+              </>
+            )}
+
+            {settingsSection ===
+              "privacy" && (
+              <>
+                <div
+                  className={
+                    styles.settingsPanelHeader
+                  }
+                >
+                  <h2>
+                    Privacy
+                  </h2>
+
+                  <p>
+                    Understand what is
+                    stored by this
+                    version of Cipher
+                    OS.
+                  </p>
+                </div>
+
+                <div
+                  className={
+                    styles.privacyBanner
+                  }
+                >
+                  <div
+                    className={
+                      styles.privacyIcon
+                    }
+                  >
+                    <Icon
+                      name="shield"
+                      size={21}
+                    />
+                  </div>
+
+                  <div>
+                    <strong>
+                      Local-first
+                      conversations
+                    </strong>
+                    <p>
+                      Your current chat
+                      history is stored
+                      in your browser's
+                      local storage.
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  className={
+                    styles.settingsCard
+                  }
+                >
+                  {renderSettingRow(
+                    {
+                      title:
+                        "Confirm before deleting",
+                      description:
+                        "Ask for confirmation before removing conversations.",
+                      children:
+                        renderToggle(
+                          confirmDeleteChats,
+                          () =>
+                            setConfirmDeleteChats(
+                              (
+                                value
+                              ) =>
+                                !value
+                            )
+                        ),
+                    }
+                  )}
+                </div>
+
+                <div
+                  className={
+                    styles.dangerZone
+                  }
+                >
+                  <div>
+                    <div
+                      className={
+                        styles.cardTitle
+                      }
+                    >
+                      Danger zone
+                    </div>
+
+                    <p>
+                      Permanently remove
+                      all conversations
+                      stored on this
+                      browser.
+                    </p>
+                  </div>
+
+                  <button
+                    className={
+                      styles.dangerAction
+                    }
+                    onClick={
+                      clearAllChats
+                    }
+                  >
+                    Clear all chats
+                  </button>
+                </div>
+              </>
+            )}
+
+            {settingsSection ===
+              "about" && (
+              <>
+                <div
+                  className={
+                    styles.settingsPanelHeader
+                  }
+                >
+                  <h2>
+                    About Cipher OS
+                  </h2>
+
+                  <p>
+                    Your personal AI
+                    workspace.
+                  </p>
+                </div>
+
+                <div
+                  className={
+                    styles.aboutCard
+                  }
+                >
+                  <div
+                    className={
+                      styles.aboutBrand
+                    }
+                  >
+                    C
+                  </div>
+
+                  <div>
+                    <strong>
+                      Cipher OS
+                    </strong>
+
+                    <p>
+                      A focused AI
+                      workspace built
+                      for learning,
+                      creativity,
+                      problem solving
+                      and technical
+                      work.
+                    </p>
+                  </div>
+                </div>
+
+                <div
+                  className={
+                    styles.infoRows
+                  }
+                >
+                  <div>
+                    <span>
+                      Version
+                    </span>
+                    <strong>
+                      1.0
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
+                      AI provider
+                    </span>
+                    <strong>
+                      OpenRouter
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
+                      Storage
+                    </span>
+                    <strong>
+                      Local browser storage
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>
+                      Interface
+                    </span>
+                    <strong>
+                      Cipher OS Workspace
+                    </strong>
+                  </div>
+                </div>
+
+                <div
+                  className={
+                    styles.aboutNote
+                  }
+                >
+                  <Icon
+                    name="info"
+                    size={17}
+                  />
+                  <span>
+                    More account,
+                    synchronization
+                    and cloud
+                    features can be
+                    added as the
+                    backend evolves.
+                  </span>
+                </div>
+              </>
+            )}
           </div>
-
-          <span
-            className={
-              styles.settingStatus
-            }
-          >
-            Active
-          </span>
         </div>
-
-        <div
-          className={
-            styles.settingsCard
-          }
-        >
-          <div>
-            <strong>
-              AI Connection
-            </strong>
-
-            <p>
-              No external AI
-              service connected
-            </p>
-          </div>
-
-          <span
-            className={
-              styles.settingStatus
-            }
-          >
-            Local
-          </span>
-        </div>
-      </div>
+      </section>
     );
   }
 
   return (
     <main
-      className={
-        styles.container
-      }
+      className={`${styles.appShell} ${
+        theme === "light"
+          ? styles.lightMode
+          : styles.darkMode
+      }`}
     >
-      <aside
-        className={
-          styles.sidebar
-        }
-      >
-        <div
-          className={
-            styles.logo
-          }
-        >
-          CIPHER
-          <span>
-            OS
-          </span>
-        </div>
-
-        <button
-          className={
-            styles.newChat
-          }
-          onClick={newChat}
-        >
-          + New Chat
-        </button>
-
-        <nav
-          className={
-            styles.nav
-          }
-        >
-          <button
-            className={
-              currentPage === "home"
-                ? styles.activeNav
-                : ""
-            }
-            onClick={() =>
-              navigateTo("home")
-            }
-          >
-            ⌂ Home
-          </button>
-
-          <button
-            className={
-              currentPage === "chats"
-                ? styles.activeNav
-                : ""
-            }
-            onClick={() =>
-              navigateTo("chats")
-            }
-          >
-            ◉ Chats
-          </button>
-
-          <button
-            className={
-              currentPage === "explore"
-                ? styles.activeNav
-                : ""
-            }
-            onClick={() =>
-              navigateTo("explore")
-            }
-          >
-            ✦ Explore
-          </button>
-        </nav>
-
-        <div
-          className={
-            styles.sidebarBottom
-          }
-        >
-          <button
-            className={
-              currentPage === "settings"
-                ? styles.activeNav
-                : ""
-            }
-            onClick={() =>
-              navigateTo("settings")
-            }
-          >
-            ⚙ Settings
-          </button>
-        </div>
-      </aside>
+      {renderSidebar()}
 
       <section
         className={
-          styles.main
+          styles.mainArea
         }
       >
-        <header
-          className={
-            styles.header
-          }
-        >
-          <button
-            className={
-              styles.mobileMenuButton
-            }
-            onClick={() =>
-              setMobileMenuOpen(
-                !mobileMenuOpen
-              )
-            }
-            aria-label="Open navigation"
-          >
-            {mobileMenuOpen
-              ? "×"
-              : "☰"}
-          </button>
+        {view === "chat" &&
+          renderChat()}
 
-          <div>
-            <h1>
-              {currentPage ===
-                "home" &&
-                "Cipher OS"}
-
-              {currentPage ===
-                "chats" &&
-                "Chats"}
-
-              {currentPage ===
-                "explore" &&
-                "Explore"}
-
-              {currentPage ===
-                "settings" &&
-                "Settings"}
-            </h1>
-
-            <p>
-              {currentPage ===
-                "home" &&
-                "Your personal AI operating system"}
-
-              {currentPage ===
-                "chats" &&
-                "Your conversation history"}
-
-              {currentPage ===
-                "explore" &&
-                "Discover Cipher OS capabilities"}
-
-              {currentPage ===
-                "settings" &&
-                "Configure your workspace"}
-            </p>
-          </div>
-
-          <div
-            className={
-              styles.status
-            }
-          >
-            <span />
-            Online
-          </div>
-        </header>
-
-        {mobileMenuOpen && (
-          <div
-            className={
-              styles.mobileMenu
-            }
-          >
-            <button
-              className={
-                currentPage === "home"
-                  ? styles.activeNav
-                  : ""
-              }
-              onClick={() =>
-                navigateTo("home")
-              }
-            >
-              ⌂ Home
-            </button>
-
-            <button
-              className={
-                currentPage === "chats"
-                  ? styles.activeNav
-                  : ""
-              }
-              onClick={() =>
-                navigateTo("chats")
-              }
-            >
-              ◉ Chats
-            </button>
-
-            <button
-              className={
-                currentPage === "explore"
-                  ? styles.activeNav
-                  : ""
-              }
-              onClick={() =>
-                navigateTo("explore")
-              }
-            >
-              ✦ Explore
-            </button>
-
-            <button
-              className={
-                currentPage === "settings"
-                  ? styles.activeNav
-                  : ""
-              }
-              onClick={() =>
-                navigateTo("settings")
-              }
-            >
-              ⚙ Settings
-            </button>
-
-            <button
-              className={
-                styles.mobileNewChat
-              }
-              onClick={newChat}
-            >
-              + New Chat
-            </button>
-          </div>
-        )}
-
-        {currentPage ===
-          "home" &&
-          renderHome()}
-
-        {currentPage ===
-          "chats" &&
+        {view === "chats" &&
           renderChats()}
 
-        {currentPage ===
-          "explore" &&
+        {view === "explore" &&
           renderExplore()}
 
-        {currentPage ===
-          "settings" &&
+        {view === "settings" &&
           renderSettings()}
       </section>
     </main>
